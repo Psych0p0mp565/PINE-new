@@ -1,0 +1,76 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+Thumbs.db
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.flutter-plugins
+.pub-cache/
+.pub/
+/build/
+/coverage/
+*.lock
+.packages
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android
+/android/app/debug
+/android/app/profile
+/android/app/release
+.gradle/
+/local.properties
+.externalNativeBuild
+.cxx
+/captures
+/android/app/build/
+/android/build/
+
+# Keys and secrets (NEVER commit)
+*.keystore
+*.jks
+*.key
+google-services.json
+
+# APKs (built artifacts)
+*.apk
+*.aab
+
+# Python
+venv/
+env/
+__pycache__/
+
+# ML training & datasets (local only; app ships assets/model/*.tflite)
+/runs/
+/datasets/
+/*.pt
+/*.zip
+calibration_image_sample_data*.npy
