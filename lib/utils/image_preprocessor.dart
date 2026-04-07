@@ -56,7 +56,16 @@ class ImagePreprocessor {
     );
 
     // Create padded canvas (inputSize x inputSize)
+    //
+    // Ultralytics YOLO letterbox commonly pads with 114-gray. Matching that here
+    // helps keep inference preprocessing aligned with training/validation.
     final padded = img.Image(width: inputSize, height: inputSize);
+    const int padV = 114;
+    for (var y = 0; y < inputSize; y++) {
+      for (var x = 0; x < inputSize; x++) {
+        padded.setPixel(x, y, img.ColorRgb8(padV, padV, padV));
+      }
+    }
     final double padLeft = (inputSize - scaledWidth) / 2.0;
     final double padTop = (inputSize - scaledHeight) / 2.0;
 

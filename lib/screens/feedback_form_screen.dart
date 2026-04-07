@@ -2,10 +2,12 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
 
 import '../core/theme.dart';
+import '../core/supabase_client.dart';
 import '../widgets/online_required_dialog.dart';
+import '../widgets/action_popup.dart';
 
 class FeedbackFormScreen extends StatefulWidget {
   const FeedbackFormScreen({super.key});
@@ -20,6 +22,50 @@ class _FeedbackFormScreenState extends State<FeedbackFormScreen> {
   final TextEditingController _messageController = TextEditingController();
 
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prefillName();
+  }
+
+  Future<void> _prefillName() async {
+    // Don't overwrite if the user already started typing.
+    if (_nameController.text.trim().isNotEmpty) return;
+
+    final client = SupabaseClientProvider.instance.clientOrNull;
+    if (client == null) return;
+
+    final currentUser = client.auth.currentUser;
+    if (currentUser == null) return;
+
+    String? displayName;
+    try {
+      final Map<String, dynamic>? row = await client
+          .from('profiles')
+          .select('display_name')
+          .eq('id', currentUser.id)
+          .maybeSingle();
+      displayName = row?['display_name'] as String?;
+    } catch (_) {
+      // Ignore profile fetch errors; fall back to auth data below.
+    }
+
+    final String? fallback = <String?>[
+      displayName?.trim().isNotEmpty == true ? displayName!.trim() : null,
+      currentUser.phone?.trim().isNotEmpty == true
+          ? currentUser.phone!.trim()
+          : null,
+      currentUser.email?.trim().isNotEmpty == true
+          ? currentUser.email!.trim()
+          : null,
+    ].firstWhere((v) => v != null, orElse: () => null);
+
+    if (fallback == null || fallback.isEmpty) return;
+    if (!mounted) return;
+
+    _nameController.text = fallback;
+  }
 
   // TODO: Replace with your published Google Apps Script Web App URL (or
   // another endpoint that writes to your Google Sheet).
@@ -40,6 +86,14 @@ class _FeedbackFormScreenState extends State<FeedbackFormScreen> {
     final String name = _nameController.text.trim();
     final String email = _emailController.text.trim();
     final String message = _messageController.text.trim();
+
+    if (name.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your name')),
+      );
+      return;
+    }
 
     if (message.length < 5) {
       if (!mounted) return;
@@ -62,9 +116,15 @@ class _FeedbackFormScreenState extends State<FeedbackFormScreen> {
     }
 
     if (!await ensureOnline(context)) return;
+    if (!mounted) return;
 
     setState(() => _submitting = true);
+    final ActionPopupController popup = ActionPopupController();
     try {
+      popup.showBlockingProgress(
+        context,
+        message: 'Submitting feedback…',
+      );
       final Uri base = Uri.parse(kGoogleSheetWebAppUrl);
       final Uri uri = base.replace(
         queryParameters: <String, String>{
@@ -74,21 +134,31 @@ class _FeedbackFormScreenState extends State<FeedbackFormScreen> {
           'message': message,
         },
       );
-      final bool launched =
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      final http.Response res = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 20));
+      popup.close();
       if (!mounted) return;
-      if (!launched) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open the submission URL')),
-        );
-        return;
-      }
 
-      Navigator.pop(context);
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        await ActionPopup.showSuccess(
+          context,
+          message: 'Submitted successfully.',
+        );
+        if (!mounted) return;
+        Navigator.pop(context);
+      } else {
+        await ActionPopup.showError(
+          context,
+          message: 'Submission failed (HTTP ${res.statusCode}). Please try again.',
+        );
+      }
     } catch (e) {
+      popup.close();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to submit: $e')),
+      await ActionPopup.showError(
+        context,
+        message: 'Failed to submit: $e',
       );
     } finally {
       if (mounted) setState(() => _submitting = false);

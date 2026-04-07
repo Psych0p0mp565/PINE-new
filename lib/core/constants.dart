@@ -19,7 +19,7 @@ abstract final class AppConstants {
   /// Minimum confidence threshold for displaying detections.
   /// Range 0.25-0.35 recommended for small pest detection to avoid
   /// filtering out low-confidence but valid detections.
-  static const double detectionThreshold = 0.30;
+  static const double detectionThreshold = 0.90;
 
   /// IoU threshold for Non-Max Suppression (NMS).
   /// Removes overlapping duplicate boxes. 0.45 is standard for YOLO.

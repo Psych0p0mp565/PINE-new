@@ -23,9 +23,13 @@ import '../services/cloud_sync_service.dart';
 import '../services/image_storage_service.dart';
 import '../services/database_service.dart';
 import '../services/inference_service.dart';
+import '../services/geo_fence_service.dart';
+import '../models/land.dart';
 import 'captured_photos_screen.dart';
 import 'location_picker_screen.dart';
 import '../widgets/online_required_dialog.dart';
+import '../widgets/action_popup.dart';
+import '../utils/exif_gps_reader.dart';
 
 // --- Camera Permission ---
 class CameraPermissionScreen extends StatelessWidget {
@@ -576,17 +580,42 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
     with SingleTickerProviderStateMixin {
   double? _taggedLat;
   double? _taggedLng;
+  GeoFenceResult? _fence;
   bool _saving = false;
+  bool _gettingGps = false;
   late final AnimationController _pulse;
+  late final GeoFenceService _geoFence;
+  late final DatabaseService _db;
 
   @override
   void initState() {
     super.initState();
+    _geoFence = GeoFenceService();
+    _db = DatabaseService();
     _pulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat();
-    _autoTagCurrentLocation();
+    // ignore: discarded_futures
+    _tagFromExifThenDevice();
+  }
+
+  /// Prefer GPS embedded in the image (EXIF); fall back to device location.
+  Future<void> _tagFromExifThenDevice() async {
+    final ({double lat, double lng})? exifGps = await readGpsFromImage(
+      bytes: widget.imageBytes,
+      path: widget.imagePath,
+    );
+    if (!mounted) return;
+    if (exifGps != null) {
+      setState(() {
+        _taggedLat = exifGps.lat;
+        _taggedLng = exifGps.lng;
+      });
+      await _updateGeoFence();
+      return;
+    }
+    await _autoTagCurrentLocation();
   }
 
   @override
@@ -610,17 +639,99 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
         return;
       }
 
-      final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-      );
+      // Prefer last-known first (more reliable offline) then try a fresh fix.
+      final Position? last = await Geolocator.getLastKnownPosition();
+      final Position pos = last ??
+          await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium,
+          ).timeout(const Duration(seconds: 6));
       if (!mounted) return;
       setState(() {
         _taggedLat = pos.latitude;
         _taggedLng = pos.longitude;
       });
+      await _updateGeoFence();
     } catch (_) {
       // If location isn't available/permission denied, keep manual tagging only.
     }
+  }
+
+  Future<bool> _ensureTaggedLocation({
+    required bool showUi,
+  }) async {
+    if (_taggedLat != null && _taggedLng != null) return true;
+    if (_gettingGps) return false;
+    _gettingGps = true;
+    final ActionPopupController popup = ActionPopupController();
+    try {
+      // User may save before initState EXIF read finishes; try EXIF first.
+      final ({double lat, double lng})? exifGps = await readGpsFromImage(
+        bytes: widget.imageBytes,
+        path: widget.imagePath,
+      );
+      if (!mounted) return false;
+      if (exifGps != null) {
+        setState(() {
+          _taggedLat = exifGps.lat;
+          _taggedLng = exifGps.lng;
+        });
+        await _updateGeoFence();
+        return true;
+      }
+
+      if (showUi && mounted) {
+        popup.showBlockingProgress(
+          context,
+          message: 'Getting GPS…',
+        );
+      }
+
+      final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return false;
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return false;
+      }
+
+      final Position? last = await Geolocator.getLastKnownPosition();
+      final Position pos = last ??
+          await Geolocator.getCurrentPosition(
+            desiredAccuracy: LocationAccuracy.medium,
+          ).timeout(const Duration(seconds: 6));
+
+      if (!mounted) return false;
+      setState(() {
+        _taggedLat = pos.latitude;
+        _taggedLng = pos.longitude;
+      });
+      await _updateGeoFence();
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      popup.close();
+      _gettingGps = false;
+    }
+  }
+
+  Future<void> _updateGeoFence() async {
+    final double? lat = _taggedLat;
+    final double? lng = _taggedLng;
+    if (lat == null || lng == null) return;
+    final String? existingFieldId = widget.fieldId?.trim();
+    if (existingFieldId != null && existingFieldId.isNotEmpty) return;
+    try {
+      await _db.initialize();
+      final List<Land> lands = await _db.getAllLands();
+      final GeoFenceResult res = _geoFence.findLandForPoint(lat, lng, lands);
+      if (!mounted) return;
+      setState(() => _fence = res);
+    } catch (_) {}
   }
 
   @override
@@ -856,6 +967,7 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
                     _taggedLat = point.latitude;
                     _taggedLng = point.longitude;
                   });
+                  await _updateGeoFence();
                 }
               },
               icon: Icon(
@@ -896,9 +1008,46 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
                     _taggedLat = point.latitude;
                     _taggedLng = point.longitude;
                   });
+                  await _updateGeoFence();
                 }
               },
             ),
+            if ((widget.fieldId == null || widget.fieldId!.trim().isEmpty) &&
+                (_fence?.isInside ?? false) &&
+                (_fence?.land?.landName.trim().isNotEmpty ?? false)) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryGreen.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: AppTheme.primaryGreen.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.fence,
+                      color: AppTheme.primaryGreen.withValues(alpha: 0.9),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        fil
+                            ? 'Nasa loob ng field: ${_fence!.land!.landName}'
+                            : 'Inside field boundary: ${_fence!.land!.landName}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textDark,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             Row(
               children: <Widget>[
@@ -953,6 +1102,10 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
   Future<void> _saveDetection(BuildContext context) async {
     if (_saving) return;
     setState(() => _saving = true);
+
+    // Make sure we try to tag a location before saving (works offline via last-known).
+    await _ensureTaggedLocation(showUi: true);
+
     if (widget.imagePath == null || widget.imagePath!.isEmpty) {
       if (context.mounted) {
         Navigator.popUntil(context, (Route<dynamic> route) => route.isFirst);
@@ -985,12 +1138,26 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
     final String userId =
         SupabaseClientProvider.instance.client.auth.currentUser?.id ?? '';
     if (userId.isEmpty) {
+      if (context.mounted) {
+        await ActionPopup.showError(
+          context,
+          message: 'You must be signed in to save a capture.',
+        );
+      }
       setState(() => _saving = false);
       return;
     }
+    final String? existingFieldId = widget.fieldId?.trim();
+    final String effectiveFieldName = (existingFieldId != null &&
+            existingFieldId.isNotEmpty)
+        ? widget.fieldName
+        : ((_fence?.isInside ?? false) &&
+                (_fence?.land?.landName.trim().isNotEmpty ?? false))
+            ? _fence!.land!.landName
+            : widget.fieldName;
     await db.insertCapturedPhoto(
       localImagePath: localPath,
-      fieldName: widget.fieldName,
+      fieldName: effectiveFieldName,
       confidence: widget.confidence,
       count: widget.count,
       detectionsJson: jsonEncode(
@@ -1041,6 +1208,14 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
           backgroundColor: AppTheme.primaryGreen,
         ),
       );
+      if ((_taggedLat == null || _taggedLng == null) && context.mounted) {
+        await ActionPopup.showError(
+          context,
+          title: 'GPS not available',
+          message: 'Saved successfully, but without a GPS location.',
+        );
+      }
+      if (!context.mounted) return;
       Navigator.popUntil(context, (Route<dynamic> route) => route.isFirst);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2003,7 +2178,7 @@ class _ScanningDialogState extends State<_ScanningDialog>
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                fil ? 'Nag-siscan ng larawan...' : 'Scanning image...',
+                fil ? 'Ina-analisa ang larawan…' : 'Analyzing picture…',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
@@ -2059,8 +2234,8 @@ class _ScanningDialogState extends State<_ScanningDialog>
               const SizedBox(height: 12),
               Text(
                 fil
-                    ? 'Nag-aantab ng mealybugs, pakihintay...'
-                    : 'Detecting mealybugs, please wait',
+                    ? 'Tinitingnan ang mealybugs, pakihintay…'
+                    : 'Detecting mealybugs, please wait…',
                 style: const TextStyle(color: AppTheme.textMedium, fontSize: 12),
               ),
             ],

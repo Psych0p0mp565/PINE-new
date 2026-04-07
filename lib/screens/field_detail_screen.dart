@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../core/supabase_client.dart';
 import '../core/theme.dart';
+import 'detections_map_screen.dart';
 import 'permission_screens.dart';
 
 /// Detail view for one field.
@@ -224,6 +225,33 @@ class FieldDetailScreen extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primaryGreen,
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                Navigator.push<void>(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => DetectionsMapScreen(
+                      fieldId: fieldId,
+                      fieldName: fieldName,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.map_outlined, size: 20),
+              label: const Text('View detections map'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.primaryGreen,
+                side: const BorderSide(color: AppTheme.primaryGreen),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),

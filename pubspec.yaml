@@ -1,7 +1,7 @@
 name: pine
 description: Offline Android mobile application for detecting tiny agricultural pests on plant leaves.
 publish_to: 'none'
-version: 1.2.0+3
+version: 3.2.0+14
 environment:
   sdk: '>=3.2.0 <4.0.0'
 
@@ -41,6 +41,7 @@ dependencies:
   android_intent_plus: ^6.0.0
   connectivity_plus: ^6.1.0
   http: ^1.2.2
+  exif: ^3.3.0
 
 dev_dependencies:
   flutter_test:

@@ -7,12 +7,18 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../models/detection_result.dart';
+import '../core/map_tiles.dart';
 import '../core/theme.dart';
 import '../services/database_service.dart';
 import '../services/export_service.dart';
 import '../services/image_storage_service.dart';
+import '../utils/severity_score.dart';
+import '../widgets/severity_glow_marker.dart';
+import '../widgets/action_popup.dart';
 
 class CapturedPhotoDetailScreen extends StatefulWidget {
   const CapturedPhotoDetailScreen({
@@ -100,6 +106,10 @@ class _CapturedPhotoDetailScreenState extends State<CapturedPhotoDetailScreen> {
           final List<Detection> detections = _parseDetections(
             row['detections_json'] as String?,
           );
+          final double sev = severity01(
+            bugCount: count,
+            confidencePct: confidence,
+          );
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -176,6 +186,78 @@ class _CapturedPhotoDetailScreenState extends State<CapturedPhotoDetailScreen> {
                   ),
                 ),
               ),
+              if (lat != null && lng != null) ...[
+                const SizedBox(height: 14),
+                Card(
+                  elevation: 0,
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.my_location,
+                              color: severityColor(sev),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Location',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: SizedBox(
+                            height: 180,
+                            child: FlutterMap(
+                              options: MapOptions(
+                                initialCenter: LatLng(lat, lng),
+                                initialZoom: 18,
+                                maxZoom: MapTiles.maxZoomSatellite.toDouble(),
+                                minZoom: 3,
+                              ),
+                              children: [
+                                TileLayer(
+                                  urlTemplate: MapTiles.esriWorldImagery,
+                                  userAgentPackageName: 'com.pine.pine',
+                                  maxZoom: MapTiles.maxZoomSatellite.toDouble(),
+                                  maxNativeZoom: MapTiles.maxZoomSatellite,
+                                ),
+                                MarkerLayer(
+                                  markers: <Marker>[
+                                    Marker(
+                                      point: LatLng(lat, lng),
+                                      width: 120,
+                                      height: 120,
+                                      alignment: Alignment.center,
+                                      child: SeverityGlowMarker(
+                                        severity01: sev,
+                                        baseSize: 22,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               SizedBox(
                 width: double.infinity,
@@ -184,17 +266,28 @@ class _CapturedPhotoDetailScreenState extends State<CapturedPhotoDetailScreen> {
                       ? null
                       : () async {
                           setState(() => _busy = true);
+                          final ActionPopupController popup =
+                              ActionPopupController();
                           try {
+                            popup.showBlockingProgress(
+                              context,
+                              message: 'Exporting…',
+                            );
                             await _export.exportSingleCapturedPhotoZip(
                               widget.capturedPhotoId,
                             );
-                          } catch (e) {
+                            popup.close();
                             if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Export failed: $e'),
-                                backgroundColor: AppTheme.errorRed,
-                              ),
+                            await ActionPopup.showSuccess(
+                              context,
+                              message: 'Export complete.',
+                            );
+                          } catch (e) {
+                            popup.close();
+                            if (!context.mounted) return;
+                            await ActionPopup.showError(
+                              context,
+                              message: 'Export failed: $e',
                             );
                           } finally {
                             if (mounted) setState(() => _busy = false);
