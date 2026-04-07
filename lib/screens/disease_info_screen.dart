@@ -79,7 +79,7 @@ class DiseaseInfoScreen extends StatelessWidget {
           children: <Widget>[
             Text(
               fil ? 'Pangkalahatang Impormasyon' : 'General Info',
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: AppTheme.textDark,
@@ -152,7 +152,7 @@ class DiseaseInfoScreen extends StatelessWidget {
             const SizedBox(height: 24),
             Text(
               fil ? 'Karaniwang Sakit' : 'Common Diseases',
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: AppTheme.textDark,
@@ -169,7 +169,7 @@ class DiseaseInfoScreen extends StatelessWidget {
               fil
                   ? 'Tuklasin ang mga Sakit ayon sa Bahagi'
                   : 'Explore Diseases by parts',
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: AppTheme.textDark,
