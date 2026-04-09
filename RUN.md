@@ -150,3 +150,14 @@ flutter run --dart-define=SUPABASE_URL=<URL> --dart-define=SUPABASE_ANON_KEY=<KE
 ```
 
 Replace `<URL>` and `<KEY>` with your Supabase project values.
+
+---
+
+## 10. What changed recently (changelog-style)
+
+Everything is in **one file:** **[`docs/RECENT_WORK_LOG.md`](docs/RECENT_WORK_LOG.md)**
+
+- **Part I (§17–23):** 30 March 2026 → 9 April 2026 — YOLO retrain, TFLite export, automation scripts, map/severity, release checks.  
+- **Part II (§1–16):** Earlier work (before 30 Mar 2026).
+
+Training and export: **`scripts/retrain_yolo.py`**, **`scripts/requirements-export.txt`**.

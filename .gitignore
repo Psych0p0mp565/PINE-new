@@ -71,6 +71,7 @@ __pycache__/
 # ML training & datasets (local only; app ships assets/model/*.tflite)
 /runs/
 /datasets/
+datasets.bak.*/
 /*.pt
 /*.zip
 calibration_image_sample_data*.npy

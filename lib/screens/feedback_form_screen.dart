@@ -89,28 +89,28 @@ class _FeedbackFormScreenState extends State<FeedbackFormScreen> {
 
     if (name.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter your name')),
+      await ActionPopup.showError(
+        context,
+        message: 'Please enter your name.',
       );
       return;
     }
 
     if (message.length < 5) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a feedback message')),
+      await ActionPopup.showError(
+        context,
+        message: 'Please enter a feedback message.',
       );
       return;
     }
 
     if (kGoogleSheetWebAppUrl.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
+      await ActionPopup.showError(
+        context,
+        message:
             'Feedback endpoint not configured yet (Google Sheet URL missing).',
-          ),
-        ),
       );
       return;
     }

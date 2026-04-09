@@ -12,6 +12,7 @@ class AppConfig {
     this.inputSize = AppConstants.inputSize,
     this.detectionThreshold = AppConstants.detectionThreshold,
     this.nmsThreshold = AppConstants.nmsThreshold,
+    this.confidenceTemperature = AppConstants.confidenceTemperature,
     this.maxDetections = AppConstants.maxDetections,
     this.interpreterThreads = AppConstants.interpreterThreads,
     this.modelPath = AppConstants.modelPath,
@@ -25,6 +26,9 @@ class AppConfig {
 
   /// IoU threshold for NMS.
   final double nmsThreshold;
+
+  /// Temperature scaling for box confidences (1.0 = off).
+  final double confidenceTemperature;
 
   /// Maximum detections per inference.
   final int maxDetections;

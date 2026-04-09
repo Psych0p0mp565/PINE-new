@@ -4,6 +4,8 @@
 
 This file combines all project Markdown documents that previously lived across the repo.
 
+**Changelog / session log (single file):** **`docs/RECENT_WORK_LOG.md`** — Part I = 30 Mar–9 Apr 2026; Part II = earlier. (Maintained separately so this combined file does not need frequent regeneration.)
+
 ---
 
 ## Source: `README.md`

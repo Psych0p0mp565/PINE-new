@@ -178,8 +178,9 @@ class _DetectionsMapScreenState extends State<DetectionsMapScreen> {
                     final int confidencePct = p.confidencePct ?? 0;
                     final double sev =
                         severity01(bugCount: bugCount, confidencePct: confidencePct);
+                    // Keep a tiny minimum weight so cells still color when count is 0 in DB.
                     final double w = math.max(
-                      0.0,
+                      1e-6,
                       bugCount * (confidencePct.clamp(0, 100) / 100.0),
                     );
                     final Offset m = _latLngToMeters(
@@ -225,9 +226,11 @@ class _DetectionsMapScreenState extends State<DetectionsMapScreen> {
                           LatLng(lat1, lng1),
                           LatLng(lat1, lng0),
                         ],
+                        // flutter_map v6: fill is skipped unless isFilled is true.
+                        isFilled: true,
                         color: fill,
                         borderColor: stroke,
-                        borderStrokeWidth: 1.0,
+                        borderStrokeWidth: 1.5,
                       ),
                     );
                   }
@@ -282,10 +285,12 @@ class _DetectionsMapScreenState extends State<DetectionsMapScreen> {
                       }).toList(),
                     ),
                     if (_showGrid)
-                      Positioned(
-                        left: 12,
-                        bottom: 12,
-                        child: _GridLegend(cellSizeM: _cellSizeM),
+                      Align(
+                        alignment: Alignment.bottomLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 12, bottom: 12),
+                          child: _GridLegend(cellSizeM: _cellSizeM),
+                        ),
                       ),
                   ],
                 );

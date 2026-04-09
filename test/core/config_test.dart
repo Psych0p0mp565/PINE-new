@@ -11,6 +11,7 @@ void main() {
       expect(config.inputSize, AppConstants.inputSize);
       expect(config.detectionThreshold, AppConstants.detectionThreshold);
       expect(config.nmsThreshold, AppConstants.nmsThreshold);
+      expect(config.confidenceTemperature, AppConstants.confidenceTemperature);
       expect(config.maxDetections, AppConstants.maxDetections);
       expect(config.interpreterThreads, AppConstants.interpreterThreads);
       expect(config.modelPath, AppConstants.modelPath);

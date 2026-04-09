@@ -11,6 +11,7 @@ import '../services/image_storage_service.dart';
 import '../widgets/capture_thumbnail.dart';
 import 'captured_photo_detail_screen.dart';
 import '../widgets/online_required_dialog.dart';
+import '../widgets/action_popup.dart';
 import 'package:provider/provider.dart';
 import '../core/app_state.dart';
 
@@ -63,16 +64,34 @@ class _CapturedPhotosScreenState extends State<CapturedPhotosScreen> {
         actions: [
           TextButton.icon(
             onPressed: () async {
+              final bool fil = context.read<AppState>().isFilipino;
               try {
                 await _export.exportCapturedPhotosZipNewOnly();
+                if (!context.mounted) return;
+                await ActionPopup.showSuccess(
+                  context,
+                  title: fil ? 'Export' : 'Export',
+                  message: fil
+                      ? 'Handa nang i-share ang ZIP (mga bagong capture).'
+                      : 'ZIP export is ready to share (new captures).',
+                );
               } catch (e) {
                 if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('$e'),
-                    backgroundColor: AppTheme.errorRed,
-                  ),
-                );
+                if (e is StateError &&
+                    e.message.contains('No new captured pictures')) {
+                  await ActionPopup.showInfo(
+                    context,
+                    title: fil ? 'Walang bago' : 'Nothing new',
+                    message: fil
+                        ? 'Walang bagong larawan na i-e-export.'
+                        : 'No new captured pictures to export.',
+                  );
+                } else {
+                  await ActionPopup.showError(
+                    context,
+                    message: '$e',
+                  );
+                }
               }
             },
             icon: const Icon(Icons.upload, color: Colors.white),
@@ -83,15 +102,22 @@ class _CapturedPhotosScreenState extends State<CapturedPhotosScreen> {
           ),
           TextButton.icon(
             onPressed: () async {
+              final bool fil = context.read<AppState>().isFilipino;
               try {
                 await _export.exportCapturedPhotosZipAll();
+                if (!context.mounted) return;
+                await ActionPopup.showSuccess(
+                  context,
+                  title: fil ? 'Export' : 'Export',
+                  message: fil
+                      ? 'Handa nang i-share ang ZIP (lahat).'
+                      : 'ZIP export is ready to share (all captures).',
+                );
               } catch (e) {
                 if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Export failed: $e'),
-                    backgroundColor: AppTheme.errorRed,
-                  ),
+                await ActionPopup.showError(
+                  context,
+                  message: 'Export failed: $e',
                 );
               }
             },
@@ -184,11 +210,13 @@ class _CapturedPhotosScreenState extends State<CapturedPhotosScreen> {
                     }
                     if (!context.mounted) return;
                     context.read<AppState>().bumpCapturedPhotos();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Assigned to field'),
-                        backgroundColor: AppTheme.primaryGreen,
-                      ),
+                    final bool fil = context.read<AppState>().isFilipino;
+                    await ActionPopup.showSuccess(
+                      context,
+                      title: fil ? 'Field' : 'Field',
+                      message: fil
+                          ? 'Naka-assign sa field.'
+                          : 'Assigned to field.',
                     );
                     return;
                   }

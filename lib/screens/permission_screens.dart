@@ -17,6 +17,7 @@ import 'package:photo_manager/photo_manager.dart';
 import '../core/config.dart';
 import '../core/app_state.dart';
 import '../core/app_logger.dart';
+import '../core/network_reachability.dart';
 import '../core/theme.dart';
 import '../models/detection_result.dart';
 import '../services/cloud_sync_service.dart';
@@ -30,6 +31,121 @@ import 'location_picker_screen.dart';
 import '../widgets/online_required_dialog.dart';
 import '../widgets/action_popup.dart';
 import '../utils/exif_gps_reader.dart';
+
+/// Shown after picking from gallery: optional map pin for where the photo was taken.
+enum _WherePhotoTakenChoice { chooseOnMap, continueWithout }
+
+/// Best-effort device GPS at the moment a gallery photo was chosen (fallback vs EXIF).
+Future<({double? lat, double? lng})> _deviceGpsWhenGalleryPhotoChosen() async {
+  try {
+    final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return (lat: null, lng: null);
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return (lat: null, lng: null);
+    }
+    final Position? last = await Geolocator.getLastKnownPosition();
+    final Position pos = last ??
+        await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+        ).timeout(const Duration(seconds: 6));
+    return (lat: pos.latitude, lng: pos.longitude);
+  } catch (_) {
+    return (lat: null, lng: null);
+  }
+}
+
+Future<latlong2.LatLng?> _promptOptionalWherePhotoTaken(
+  BuildContext context,
+) async {
+  final bool fil = context.read<AppState>().isFilipino;
+  final _WherePhotoTakenChoice? choice =
+      await showModalBottomSheet<_WherePhotoTakenChoice>(
+    context: context,
+    showDragHandle: true,
+    builder: (BuildContext sheetContext) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                fil ? 'Saan kinunan ang larawan?' : 'Where was this photo taken?',
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.textDark,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                fil
+                    ? 'Opsyonal. Kung laktawan, gagamitin ang iyong lokasyon ngayon (o GPS sa larawan kung mayroon).'
+                    : 'Optional. If you skip, we use your current location now (or GPS from the file if present).',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () =>
+                    Navigator.pop(sheetContext, _WherePhotoTakenChoice.chooseOnMap),
+                icon: const Icon(Icons.map),
+                label: Text(fil ? 'Pumili sa mapa' : 'Choose on map'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.primaryGreen,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton(
+                onPressed: () =>
+                    Navigator.pop(sheetContext, _WherePhotoTakenChoice.continueWithout),
+                child: Text(fil ? 'Laktawan' : 'Skip'),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+  if (!context.mounted) return null;
+  if (choice != _WherePhotoTakenChoice.chooseOnMap) return null;
+  if (!await ensureOnline(context)) return null;
+  if (!context.mounted) return null;
+  final Object? r = await Navigator.push<Object?>(
+    context,
+    MaterialPageRoute<Object?>(
+      builder: (_) => const LocationPickerScreen(),
+    ),
+  );
+  if (r is latlong2.LatLng) return r;
+  return null;
+}
+
+String _noDetectionsDetailMessage(
+  BuildContext context,
+  DetectionResult result,
+) {
+  final bool fil = context.read<AppState>().isFilipino;
+  final double maxRaw = (result.maxRawConfidence ?? 0.0) * 100;
+  final String sample = (result.outputSample ?? const <double>[])
+      .take(6)
+      .map((v) => v.toStringAsFixed(3))
+      .join(', ');
+  final String tech =
+      'maxRaw=${maxRaw.toStringAsFixed(1)}% raw=${result.rawDetectionsCount ?? 0} '
+      'thr=${AppConfig.balanced().detectionThreshold} sample=[$sample]';
+  if (fil) {
+    return 'Walang namataang mealybug sa scan na ito.\n\n$tech';
+  }
+  return 'No mealybugs detected in this scan.\n\n$tech';
+}
 
 // --- Camera Permission ---
 class CameraPermissionScreen extends StatelessWidget {
@@ -338,6 +454,16 @@ class _PhotoSourcePickerState extends State<PhotoSourcePicker> {
       if (picked == null || !mounted) return;
 
       final String path = picked.path;
+      final latlong2.LatLng? mapPick =
+          await _promptOptionalWherePhotoTaken(context);
+      if (!mounted) return;
+      final ({double? lat, double? lng}) pickGps =
+          await _deviceGpsWhenGalleryPhotoChosen();
+      final double? chosenTakeLat = mapPick?.latitude;
+      final double? chosenTakeLng = mapPick?.longitude;
+      final double? pickMomentLat = pickGps.lat;
+      final double? pickMomentLng = pickGps.lng;
+
       int confidence = 0;
       int count = 0;
       List<Detection> detections = const <Detection>[];
@@ -375,6 +501,15 @@ class _PhotoSourcePickerState extends State<PhotoSourcePicker> {
                     100)
                 .round()
                 .clamp(0, 100);
+        if (count == 0 && mounted) {
+          await ActionPopup.showInfo(
+            context,
+            title: context.read<AppState>().isFilipino
+                ? 'Walang deteksyon'
+                : 'No detections',
+            message: _noDetectionsDetailMessage(context, result),
+          );
+        }
       } catch (e) {
         if (scanDialogShown && rootContext.mounted) {
           Navigator.of(rootContext, rootNavigator: true).pop();
@@ -382,11 +517,9 @@ class _PhotoSourcePickerState extends State<PhotoSourcePicker> {
         }
         AppLogger.error('Inference ERROR (gallery direct)', e);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Detection failed: $e'),
-              backgroundColor: Colors.red,
-            ),
+          await ActionPopup.showError(
+            context,
+            message: 'Detection failed: $e',
           );
         }
       }
@@ -405,6 +538,10 @@ class _PhotoSourcePickerState extends State<PhotoSourcePicker> {
             originalImageWidth: originalImageWidth,
             originalImageHeight: originalImageHeight,
             fieldId: widget.fieldId,
+            takeLocationChosenLat: chosenTakeLat,
+            takeLocationChosenLng: chosenTakeLng,
+            pickMomentLat: pickMomentLat,
+            pickMomentLng: pickMomentLng,
           ),
         ),
       );
@@ -556,6 +693,10 @@ class PhotoResultScreen extends StatefulWidget {
     this.originalImageWidth,
     this.originalImageHeight,
     this.fieldId,
+    this.takeLocationChosenLat,
+    this.takeLocationChosenLng,
+    this.pickMomentLat,
+    this.pickMomentLng,
   });
 
   final String fieldName;
@@ -571,6 +712,14 @@ class PhotoResultScreen extends StatefulWidget {
 
   /// When set, Save uses these for Supabase (`detections` + local queue).
   final String? fieldId;
+
+  /// User-picked “where taken” from map after gallery pick (highest priority).
+  final double? takeLocationChosenLat;
+  final double? takeLocationChosenLng;
+
+  /// Device GPS captured when the gallery photo was chosen (after optional sheet).
+  final double? pickMomentLat;
+  final double? pickMomentLng;
 
   @override
   State<PhotoResultScreen> createState() => _PhotoResultScreenState();
@@ -596,12 +745,22 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     )..repeat();
+    final double? cLat = widget.takeLocationChosenLat;
+    final double? cLng = widget.takeLocationChosenLng;
+    if (cLat != null && cLng != null) {
+      _taggedLat = cLat;
+      _taggedLng = cLng;
+    }
     // ignore: discarded_futures
     _tagFromExifThenDevice();
   }
 
-  /// Prefer GPS embedded in the image (EXIF); fall back to device location.
+  /// Priority: user map pick → EXIF → GPS when gallery photo was chosen → live device.
   Future<void> _tagFromExifThenDevice() async {
+    if (_taggedLat != null && _taggedLng != null) {
+      await _updateGeoFence();
+      return;
+    }
     final ({double lat, double lng})? exifGps = await readGpsFromImage(
       bytes: widget.imageBytes,
       path: widget.imagePath,
@@ -611,6 +770,16 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
       setState(() {
         _taggedLat = exifGps.lat;
         _taggedLng = exifGps.lng;
+      });
+      await _updateGeoFence();
+      return;
+    }
+    final double? mLat = widget.pickMomentLat;
+    final double? mLng = widget.pickMomentLng;
+    if (mLat != null && mLng != null) {
+      setState(() {
+        _taggedLat = mLat;
+        _taggedLng = mLng;
       });
       await _updateGeoFence();
       return;
@@ -664,7 +833,18 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
     _gettingGps = true;
     final ActionPopupController popup = ActionPopupController();
     try {
-      // User may save before initState EXIF read finishes; try EXIF first.
+      final double? chosenLat = widget.takeLocationChosenLat;
+      final double? chosenLng = widget.takeLocationChosenLng;
+      if (chosenLat != null && chosenLng != null) {
+        setState(() {
+          _taggedLat = chosenLat;
+          _taggedLng = chosenLng;
+        });
+        await _updateGeoFence();
+        return true;
+      }
+
+      // User may save before initState EXIF read finishes; try EXIF next.
       final ({double lat, double lng})? exifGps = await readGpsFromImage(
         bytes: widget.imageBytes,
         path: widget.imagePath,
@@ -674,6 +854,17 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
         setState(() {
           _taggedLat = exifGps.lat;
           _taggedLng = exifGps.lng;
+        });
+        await _updateGeoFence();
+        return true;
+      }
+
+      final double? pmLat = widget.pickMomentLat;
+      final double? pmLng = widget.pickMomentLng;
+      if (pmLat != null && pmLng != null) {
+        setState(() {
+          _taggedLat = pmLat;
+          _taggedLng = pmLng;
         });
         await _updateGeoFence();
         return true;
@@ -750,6 +941,8 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
         ? (widget.confidence.clamp(0, 100) / 100.0)
         : sortedDetections.first.confidence;
     final int topPct = (topConfidence * 100).round().clamp(0, 100);
+    final bool hasMealybugHits =
+        sortedDetections.isNotEmpty || widget.count > 0;
     return Scaffold(
       backgroundColor: AppTheme.backgroundLight,
       appBar: AppBar(
@@ -835,7 +1028,13 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
                     ),
                   ],
                   Text(
-                    fil ? 'May mealybug infestation' : 'Infested with Mealybug',
+                    hasMealybugHits
+                        ? (fil
+                            ? 'May mealybug infestation'
+                            : 'Infested with Mealybug')
+                        : (fil
+                            ? 'Walang nakitang mealybug'
+                            : 'No mealybugs detected'),
                     style: const TextStyle(color: Colors.white70, fontSize: 14),
                   ),
                   const SizedBox(height: 20),
@@ -1116,11 +1315,9 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
     final File file = File(widget.imagePath!);
     if (!await file.exists()) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Image file not found'),
-            backgroundColor: AppTheme.errorRed,
-          ),
+        await ActionPopup.showError(
+          context,
+          message: 'Image file not found.',
         );
       }
       setState(() => _saving = false);
@@ -1194,37 +1391,31 @@ class _PhotoResultScreenState extends State<PhotoResultScreen>
     // Kick off background sync (will no-op if offline).
     CloudSyncService(databaseService: db).syncInBackground();
 
-    final Map<String, dynamic> result = <String, dynamic>{
-      'success': true,
-      'message': 'Saved offline. Will upload when online.',
-    };
     if (!context.mounted) return;
-    final bool success = result['success'] as bool? ?? false;
-    final String message = result['message'] as String? ?? 'Unknown error';
-    if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: AppTheme.primaryGreen,
-        ),
-      );
-      if ((_taggedLat == null || _taggedLng == null) && context.mounted) {
-        await ActionPopup.showError(
-          context,
-          title: 'GPS not available',
-          message: 'Saved successfully, but without a GPS location.',
-        );
-      }
-      if (!context.mounted) return;
-      Navigator.popUntil(context, (Route<dynamic> route) => route.isFirst);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: AppTheme.errorRed,
-        ),
-      );
-    }
+    final bool fil = context.read<AppState>().isFilipino;
+    final bool online = await NetworkReachability.isOnline();
+    if (!context.mounted) return;
+    final String message = online
+        ? (fil ? 'Na-save ang larawan.' : 'Picture saved.')
+        : (fil
+            ? 'Na-save nang offline. Ia-upload kapag online.'
+            : 'Saved offline. Will upload when online.');
+
+    final bool noGps = _taggedLat == null || _taggedLng == null;
+    final String fullMessage = noGps
+        ? '$message\n\n${fil ? 'Paalala: Na-save nang walang GPS sa mapa.' : 'Note: Saved without a GPS location on the map.'}'
+        : message;
+
+    await ActionPopup.showSuccessAutoDismiss(
+      context,
+      title: fil ? 'Na-save' : 'Saved',
+      message: fullMessage,
+      readSeconds: 3,
+      countdownLabel: (int r) =>
+          fil ? 'Magpapatuloy sa $r…' : 'Continuing in $r…',
+    );
+    if (!context.mounted) return;
+    Navigator.popUntil(context, (Route<dynamic> route) => route.isFirst);
     if (mounted) setState(() => _saving = false);
   }
 }
@@ -1757,21 +1948,12 @@ class _CameraModeSelectorState extends State<CameraModeSelector> {
                 .round()
                 .clamp(0, 100);
         if (count == 0 && mounted) {
-          final double maxRaw = (result.maxRawConfidence ?? 0.0) * 100;
-          final sample = (result.outputSample ?? const <double>[])
-              .take(6)
-              .map((v) => v.toStringAsFixed(3))
-              .join(', ');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'No detections. maxRaw=${maxRaw.toStringAsFixed(1)}% '
-                '(raw=${result.rawDetectionsCount ?? 0}, thr=${AppConfig.balanced().detectionThreshold}) '
-                'out[0..5]=[$sample]',
-              ),
-              backgroundColor: Colors.orange.shade800,
-              duration: const Duration(seconds: 4),
-            ),
+          await ActionPopup.showInfo(
+            context,
+            title: context.read<AppState>().isFilipino
+                ? 'Walang deteksyon'
+                : 'No detections',
+            message: _noDetectionsDetailMessage(context, result),
           );
         }
       } catch (e) {
@@ -1782,11 +1964,9 @@ class _CameraModeSelectorState extends State<CameraModeSelector> {
         // Make inference failures visible instead of silently showing 0%.
         AppLogger.error('Inference ERROR (camera)', e);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Detection failed: $e'),
-              backgroundColor: Colors.red,
-            ),
+          await ActionPopup.showError(
+            context,
+            message: 'Detection failed: $e',
           );
         }
       }
@@ -1809,11 +1989,9 @@ class _CameraModeSelectorState extends State<CameraModeSelector> {
       );
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not capture photo'),
-            backgroundColor: Colors.red,
-          ),
+        await ActionPopup.showError(
+          context,
+          message: 'Could not capture photo.',
         );
       }
     } finally {
@@ -1960,6 +2138,19 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         return;
       }
       final String path = picked.path;
+      final latlong2.LatLng? mapPick =
+          await _promptOptionalWherePhotoTaken(context);
+      if (!mounted) {
+        setState(() => _isProcessing = false);
+        return;
+      }
+      final ({double? lat, double? lng}) pickGps =
+          await _deviceGpsWhenGalleryPhotoChosen();
+      final double? chosenTakeLat = mapPick?.latitude;
+      final double? chosenTakeLng = mapPick?.longitude;
+      final double? pickMomentLat = pickGps.lat;
+      final double? pickMomentLng = pickGps.lng;
+
       int confidence = 0;
       int count = 0;
       List<Detection> detections = const <Detection>[];
@@ -2000,21 +2191,12 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                 .round()
                 .clamp(0, 100);
         if (count == 0 && mounted) {
-          final double maxRaw = (result.maxRawConfidence ?? 0.0) * 100;
-          final sample = (result.outputSample ?? const <double>[])
-              .take(6)
-              .map((v) => v.toStringAsFixed(3))
-              .join(', ');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'No detections. maxRaw=${maxRaw.toStringAsFixed(1)}% '
-                '(raw=${result.rawDetectionsCount ?? 0}, thr=${AppConfig.balanced().detectionThreshold}) '
-                'out[0..5]=[$sample]',
-              ),
-              backgroundColor: Colors.orange.shade800,
-              duration: const Duration(seconds: 4),
-            ),
+          await ActionPopup.showInfo(
+            context,
+            title: context.read<AppState>().isFilipino
+                ? 'Walang deteksyon'
+                : 'No detections',
+            message: _noDetectionsDetailMessage(context, result),
           );
         }
       } catch (e) {
@@ -2024,11 +2206,9 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         }
         AppLogger.error('Inference ERROR (gallery)', e);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Detection failed: $e'),
-              backgroundColor: Colors.red,
-            ),
+          await ActionPopup.showError(
+            context,
+            message: 'Detection failed: $e',
           );
         }
       }
@@ -2046,16 +2226,18 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
             originalImageWidth: originalImageWidth,
             originalImageHeight: originalImageHeight,
             fieldId: widget.fieldId,
+            takeLocationChosenLat: chosenTakeLat,
+            takeLocationChosenLng: chosenTakeLng,
+            pickMomentLat: pickMomentLat,
+            pickMomentLng: pickMomentLng,
           ),
         ),
       );
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not pick image'),
-            backgroundColor: Colors.red,
-          ),
+        await ActionPopup.showError(
+          context,
+          message: 'Could not pick image.',
         );
       }
     } finally {

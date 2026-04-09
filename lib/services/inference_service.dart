@@ -53,6 +53,7 @@ class InferenceService {
         inputSize: _config.inputSize,
         detectionThreshold: _config.detectionThreshold,
         nmsThreshold: _config.nmsThreshold,
+        confidenceTemperature: _config.confidenceTemperature,
         maxDetections: _config.maxDetections,
         interpreterThreads: _config.interpreterThreads,
         classLabels: List.from(classLabels),
@@ -74,6 +75,7 @@ class _InferenceParams {
     required this.inputSize,
     required this.detectionThreshold,
     required this.nmsThreshold,
+    required this.confidenceTemperature,
     required this.maxDetections,
     required this.interpreterThreads,
     required this.classLabels,
@@ -85,6 +87,7 @@ class _InferenceParams {
   final int inputSize;
   final double detectionThreshold;
   final double nmsThreshold;
+  final double confidenceTemperature;
   final int maxDetections;
   final int interpreterThreads;
   final List<String> classLabels;
@@ -258,13 +261,32 @@ Future<DetectionResult> _runInferenceIsolate(_InferenceParams params) async {
         ? _parseFinalDetections6(outputBuffer, outputShape)
         : _parseYoloOutput(outputBuffer, outputShape, numClasses, hasObjectness);
 
+    final List<_RawDetection> scaledDetections =
+        params.confidenceTemperature == 1.0
+            ? rawDetections
+            : rawDetections
+                .map(
+                  (_RawDetection d) => _RawDetection(
+                    cx: d.cx,
+                    cy: d.cy,
+                    w: d.w,
+                    h: d.h,
+                    confidence: _temperatureScaleProbability(
+                      d.confidence,
+                      params.confidenceTemperature,
+                    ),
+                    classIndex: d.classIndex,
+                  ),
+                )
+                .toList();
+
     // Print quick stats to validate model output.
-    if (rawDetections.isNotEmpty) {
-      final maxC = rawDetections
+    if (scaledDetections.isNotEmpty) {
+      final maxC = scaledDetections
           .map((d) => d.confidence)
           .reduce((a, b) => a > b ? a : b);
       AppLogger.debug(
-        'Inference: rawDetections=${rawDetections.length} maxConf=${(maxC * 100).toStringAsFixed(1)}%',
+        'Inference: rawDetections=${scaledDetections.length} maxConf=${(maxC * 100).toStringAsFixed(1)}%',
       );
     } else {
       AppLogger.debug(
@@ -276,7 +298,7 @@ Future<DetectionResult> _runInferenceIsolate(_InferenceParams params) async {
     }
 
     final filtered = _applyNms(
-      rawDetections,
+      scaledDetections,
       params.nmsThreshold,
       params.maxDetections,
     );
@@ -572,6 +594,15 @@ List<_RawDetection> _parseFinalDetections6(
 }
 
 double _sigmoid(double x) => 1.0 / (1.0 + math.exp(-x));
+
+/// Temperature scaling on a scalar probability (Platt-style logit rescale).
+double _temperatureScaleProbability(double p, double temperature) {
+  if (!p.isFinite) return 0.0;
+  if (temperature <= 0 || temperature == 1.0) return p.clamp(0.0, 1.0);
+  final double pc = p.clamp(1e-6, 1.0 - 1e-6);
+  final double logit = math.log(pc / (1.0 - pc));
+  return _sigmoid(logit / temperature).clamp(0.0, 1.0);
+}
 
 double _normalizeScore(double raw) {
   if (!raw.isFinite) return 0.0;

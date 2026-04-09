@@ -1,0 +1,5 @@
+# Pip deps for retrain_yolo.py --export-only (TFLite). Use the project venv.
+# PyPI no longer serves tensorflow<=2.19; use 2.20+ on Python 3.12/3.13.
+tensorflow>=2.20,<2.22
+tf_keras>=2.21,<2.22
+onnxruntime

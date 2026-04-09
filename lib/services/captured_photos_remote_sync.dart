@@ -67,8 +67,7 @@ class CapturedPhotosRemoteSync {
         final double? lng =
             d['longitude'] == null ? null : (d['longitude'] as num).toDouble();
 
-        final int conf =
-            (d['confidence'] as num?)?.round() ?? 0;
+        final int conf = _remoteConfidenceToPercent(d['confidence'] as num?);
         final int cnt = (d['count'] as num?)?.toInt() ?? 0;
         final DateTime created = DateTime.tryParse(
               d['created_at'] as String? ?? '',
@@ -94,5 +93,13 @@ class CapturedPhotosRemoteSync {
       AppLogger.error('CapturedPhotosRemoteSync.pull failed', e, st);
       return 0;
     }
+  }
+
+  /// Supabase may store confidence as 0–100 (app uploads) or 0–1 (older rows).
+  static int _remoteConfidenceToPercent(num? raw) {
+    if (raw == null) return 0;
+    final double v = raw.toDouble();
+    final double pct = v <= 1.0 ? v * 100.0 : v;
+    return pct.round().clamp(0, 100);
   }
 }
